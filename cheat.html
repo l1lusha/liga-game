@@ -139,7 +139,15 @@
       z-index: 1;
     }
 
-    /* Мёртвые ячейки: точно пустые и «только ненужная бомба» */
+    /* Ячейка с точно известной бомбой, но пока без определённого цвета */
+    .cell.detected-bomb {
+      background: #1a0d0d;
+      border-color: #7a3030;
+    }
+    .cell.detected-bomb:hover { box-shadow: 0 0 8px rgba(255,120,120,0.2); }
+    .cell.detected-bomb .icon { opacity: 0.85; }
+
+    /* Серые точно пустые ячейки */
     .cell.marked-empty {
       background: #1a1a1a;
       border-color: #333;
@@ -158,14 +166,6 @@
     .cell.rec-open {
       border-color: #66dd66;
       box-shadow: 0 0 10px rgba(80, 220, 80, 0.45);
-    }
-    .cell.rec-hint {
-      border-color: #ddaa44;
-      box-shadow: 0 0 10px rgba(240, 180, 60, 0.3);
-    }
-    .cell.rec-hint-good {
-      border-color: #ffcc00;
-      box-shadow: 0 0 12px rgba(255, 204, 0, 0.5);
     }
     .cell.rec-danger {
       border-color: #ff6666;
@@ -188,8 +188,8 @@
       z-index: 2;
     }
     .badge-open    { color: #aaffaa; }
-    .badge-hint    { color: #ffd97a; }
     .badge-empty   { color: #bbb; }
+    .badge-auto    { color: #ffdd88; }
 
     /* Надпись «использовать подсказку» в ячейках с возможной бомбой */
     .danger-label {
@@ -306,6 +306,8 @@
 
     let cells = [];
     let selectedTool = null;
+    // Результат автообнаружения: "r-c" -> {kind:'bomb', color|null} | null
+    let detected = {};
 
     const gridEl = document.getElementById('grid');
     const toolbarEl = document.getElementById('toolbar');
@@ -333,25 +335,39 @@
         Array.from({ length: GRID_SIZE }, () => ({ item: null, crosses: new Set(), markedEmpty: false }))
       );
       selectedTool = null;
+      detected = {};
       renderToolbar();
       renderGrid();
       refresh();
       updateStatus('Выбери предмет и кликни по ячейке.');
     }
 
-    function placedCount(type, color) {
+    // Подсчёт предметов: includeAuto — учитывать ли автообнаруженные
+    function countPlaced(type, color, includeAuto) {
       let n = 0;
       for (let r = 0; r < GRID_SIZE; r++)
         for (let c = 0; c < GRID_SIZE; c++) {
           const item = cells[r][c].item;
-          if (item && item.type === type && item.color === color) n++;
+          if (item && item.type === type && item.color === color) {
+            if (!includeAuto && item.auto) continue;
+            n++;
+          }
         }
       return n;
     }
 
+    function placedCount(type, color) { return countPlaced(type, color, true); }
+    function placedManual(type, color) { return countPlaced(type, color, false); }
+
     function totals(type) {
       let n = 0;
       for (const color of colors) n += placedCount(type, color);
+      return n;
+    }
+
+    function manualTotals(type) {
+      let n = 0;
+      for (const color of colors) n += placedManual(type, color);
       return n;
     }
 
@@ -379,8 +395,9 @@
     }
 
     function currentEnergy() {
-      return ENERGY_START - COST.bomb * totals('bomb')
-                           - COST.key * totals('key')
+      // Автообнаруженные бомбы энергии не стоят — это выведенное знание
+      return ENERGY_START - COST.bomb * manualTotals('bomb')
+                           - COST.key * manualTotals('key')
                            - COST.empty * markedEmptyCount();
     }
 
@@ -400,20 +417,165 @@
       return res;
     }
 
-    // Цвет «закрыт»: все его ключи найдены, а бомба(ы) ещё на поле.
-    // Такие бомбы для победы не нужны, но открытие любой бомбы — проигрыш.
-    function closedBombColor(color) {
-      return remaining('key', color) === 0 && remaining('bomb', color) > 0;
-    }
-
-    // Вычисляемая блокировка ячейки: 'empty' | 'bomb' | null
+    // Вычисляемая блокировка: ячейка заблокирована, если единственная
+    // возможность в ней — бомба (цвет может быть известен или нет)
     function cellLockState(r, c) {
       const data = cells[r][c];
       if (data.item || data.markedEmpty) return null;
       const poss = possibleItems(r, c);
       if (poss.length === 0) return 'empty';
-      if (poss.every(p => p.type === 'bomb' && closedBombColor(p.color))) return 'bomb';
+      if (poss.every(p => p.type === 'bomb')) return 'bomb';
       return null;
+    }
+
+    // ============ АВТООБНАРУЖЕНИЕ (решатель) ============
+    // Перебирает все допустимые раскладки оставшихся предметов.
+    // Ячейка — точно бомба, если она бомба в КАЖДОЙ допустимой раскладке.
+    function computeDetection() {
+      detected = {};
+
+      const freeCells = [];
+      for (let r = 0; r < GRID_SIZE; r++)
+        for (let c = 0; c < GRID_SIZE; c++) {
+          const d = cells[r][c];
+          if (!d.item && !d.markedEmpty) freeCells.push([r, c]);
+        }
+      if (freeCells.length === 0) return;
+
+      const groups = [];
+      for (const color of colors) {
+        const kr = remaining('key', color);
+        if (kr > 0) groups.push({ type: 'key', color, count: kr });
+        const br = remaining('bomb', color);
+        if (br > 0) groups.push({ type: 'bomb', color, count: br });
+      }
+
+      const totalItems = groups.reduce((a, g) => a + g.count, 0);
+      if (totalItems > freeCells.length) return; // ввод противоречив
+
+      const keyOf = (r, c) => r + '-' + c;
+      for (const [r, c] of freeCells) detected[keyOf(r, c)] = new Set();
+
+      if (totalItems === 0) {
+        // Все предметы уже известны — остальные ячейки точно пустые
+        for (const [r, c] of freeCells) detected[keyOf(r, c)].add('empty');
+        classifyDetection(freeCells, keyOf);
+        return;
+      }
+
+      const occ = new Array(GRID_SIZE * GRID_SIZE).fill(null);
+      let nodeCount = 0;
+      let overflow = false;
+      let found = 0;
+      const NODE_CAP = 400000;
+
+      function record() {
+        found++;
+        for (const [r, c] of freeCells) {
+          const v = occ[r * GRID_SIZE + c];
+          detected[keyOf(r, c)].add(v ? v : 'empty');
+        }
+      }
+
+      function pick(gi, giCount, startIdx) {
+        if (overflow) return;
+        if (giCount === groups[gi].count) {
+          if (gi + 1 < groups.length) pick(gi + 1, 0, 0);
+          else record();
+          return;
+        }
+        const g = groups[gi];
+        const tag = g.type + ':' + g.color;
+        for (let i = startIdx; i < freeCells.length; i++) {
+          const [r, c] = freeCells[i];
+          if (occ[r * GRID_SIZE + c]) continue;
+          if (cells[r][c].crosses.has(g.color)) continue;
+          let ok = true;
+          for (const [nr, nc] of getNeighbors(r, c)) {
+            const nv = occ[nr * GRID_SIZE + nc];
+            if (nv && nv.split(':')[1] === g.color) { ok = false; break; }
+          }
+          if (!ok) continue;
+          occ[r * GRID_SIZE + c] = tag;
+          pick(gi, giCount + 1, i + 1);
+          occ[r * GRID_SIZE + c] = null;
+          if (++nodeCount > NODE_CAP) { overflow = true; return; }
+        }
+      }
+
+      pick(0, 0, 0);
+
+      if (overflow || found === 0) {
+        detected = {};
+        return;
+      }
+
+      classifyDetection(freeCells, keyOf);
+    }
+
+    function classifyDetection(freeCells, keyOf) {
+      for (const [r, c] of freeCells) {
+        const set = detected[keyOf(r, c)];
+        if (set.has('empty')) {
+          detected[keyOf(r, c)] = null; // пусто возможно — не точно
+          continue;
+        }
+        const entries = [...set];
+        if (entries.length === 0) {
+          detected[keyOf(r, c)] = null;
+          continue;
+        }
+        if (entries.every(e => e.startsWith('bomb:'))) {
+          const cols = [...new Set(entries.map(e => e.split(':')[1]))];
+          detected[keyOf(r, c)] = { kind: 'bomb', color: cols.length === 1 ? cols[0] : null };
+        } else {
+          detected[keyOf(r, c)] = null;
+        }
+      }
+    }
+
+    // Ставит найденные однозначные бомбы (включая «ненужные» закрытых
+    // цветов) и повторяет детекцию, пока находятся новые — каскад
+    function autoDetectLoop() {
+      let autoPlaced = 0;
+      for (let iter = 0; iter < 15; iter++) {
+        computeDetection();
+        let changed = false;
+
+        // 1) Точные бомбы от решателя (цвет однозначен)
+        for (let r = 0; r < GRID_SIZE; r++) {
+          for (let c = 0; c < GRID_SIZE; c++) {
+            const det = detected[r + '-' + c];
+            if (det && det.kind === 'bomb' && det.color) {
+              cells[r][c].item = { type: 'bomb', color: det.color, auto: true };
+              changed = true;
+              autoPlaced++;
+            }
+          }
+        }
+
+        // 2) Страховка: если решатель не сработал (например, слишком много
+        // вариантов), но в ячейке по простым правилам может быть только
+        // бомба одного цвета — тоже проставляем её автоматически
+        for (let r = 0; r < GRID_SIZE; r++) {
+          for (let c = 0; c < GRID_SIZE; c++) {
+            const data = cells[r][c];
+            if (data.item || data.markedEmpty) continue;
+            const poss = possibleItems(r, c);
+            if (poss.length === 0) continue;
+            if (!poss.every(p => p.type === 'bomb')) continue;
+            const cols = [...new Set(poss.map(p => p.color))];
+            if (cols.length !== 1) continue;
+            cells[r][c].item = { type: 'bomb', color: cols[0], auto: true };
+            changed = true;
+            autoPlaced++;
+          }
+        }
+
+        if (!changed) break;
+        recomputeCrosses();
+      }
+      return autoPlaced;
     }
 
     function createToolButton(type, color) {
@@ -510,13 +672,25 @@
     function renderCell(r, c) {
       const cellEl = document.getElementById(`cell-${r}-${c}`);
       const data = cells[r][c];
+      const det = detected[r + '-' + c];
       const lock = cellLockState(r, c);
 
       cellEl.className = 'cell';
       if (data.item) {
+        // Найденная бомба (в том числе автообнаруженная) — цветом
         cellEl.classList.add('bg-' + data.item.color);
         cellEl.innerHTML = `<span class="icon">${itemEmoji[data.item.type]}</span>`;
-      } else if (data.markedEmpty || lock === 'empty' || lock === 'bomb') {
+        if (data.item.auto) {
+          const b = document.createElement('span');
+          b.className = 'badge badge-auto';
+          b.textContent = 'авто';
+          cellEl.appendChild(b);
+        }
+      } else if ((det && det.kind === 'bomb') || lock === 'bomb') {
+        // Точно бомба, но цвет ещё не определён — тёмная пометка с 💣
+        cellEl.classList.add('detected-bomb');
+        cellEl.innerHTML = `<span class="icon">💣</span>`;
+      } else if (data.markedEmpty || lock === 'empty') {
         cellEl.classList.add('marked-empty');
         cellEl.innerHTML = `<span class="empty-mark">пусто</span>`;
       } else {
@@ -554,19 +728,21 @@
           const data = cells[r][c];
           if (data.item) continue;
 
+          const det = detected[r + '-' + c];
           const lock = cellLockState(r, c);
 
-          // Мёртвые ячейки
-          if (data.markedEmpty || lock === 'bomb') {
+          // Точно бомба без определённого цвета — бейдж, без подсветки
+          if ((det && det.kind === 'bomb') || lock === 'bomb') {
             const b = document.createElement('span');
             b.className = 'badge badge-empty';
-            b.textContent = 'пусто';
+            b.textContent = '💣 точно';
             cellEl.appendChild(b);
             continue;
           }
-          if (lock === 'empty') {
-            // Если это последняя незанятая ячейка на поле — она автоматически
-            // становится безопасной для открытия без подсказки
+
+          // Точно пустая ячейка
+          if (data.markedEmpty || lock === 'empty') {
+            // Последняя незанятая ячейка на поле — автоматически безопасна
             if (freeLeft === 1) {
               cellEl.classList.add('rec-open');
               const d = document.createElement('span');
@@ -622,8 +798,8 @@
       const keysPlaced = totals('key');
       const energy = currentEnergy();
 
-      if (keysPlaced === 5) {
-        bannerEl.textContent = '🎯 Схема готова: все ключи и бомбы расставлены!';
+      if (totalPlaced() === 10) {
+        bannerEl.textContent = '🎯 Схема готова: все ключи и бомбы известны!';
         bannerEl.classList.add('show');
       } else if (bombsPlaced === 5) {
         bannerEl.textContent =
@@ -637,6 +813,7 @@
 
     function refresh() {
       recomputeCrosses();
+      autoDetectLoop(); // может автоматически проставить точные бомбы
       for (let r = 0; r < GRID_SIZE; r++)
         for (let c = 0; c < GRID_SIZE; c++)
           renderCell(r, c);
@@ -656,12 +833,15 @@
       const data = cells[r][c];
       const lock = cellLockState(r, c);
       const poss = possibleItems(r, c);
+      const det = detected[r + '-' + c];
 
       if (!selectedTool) {
-        if (lock === 'bomb') {
+        if (data.item && data.item.auto) {
+          updateStatus(`Здесь точно ${itemNames[data.item.type]} (${colorNames[data.item.color]}) — обнаружено по схеме. Открывать и подсказывать не нужно.`, '#ffcccc');
+        } else if ((det && det.kind === 'bomb') || lock === 'bomb') {
           const cols = [...new Set(poss.map(p => p.color))].map(cl => colorNames[cl]).join(', ');
-          updateStatus(`Здесь по схеме может быть только бомба (${cols}) — для победы она не нужна. Не открывай и не подсказывай эту ячейку. Если подсказка в игре показала здесь бомбу — выбери её в панели и кликни, чтобы отметить.`, '#ffcccc');
-        } else if (lock === 'empty') {
+          updateStatus(`Здесь точно бомба (${cols}) — это доказано схемой. Открывать и подсказывать эту ячейку не нужно.`, '#ffcccc');
+        } else if (lock === 'empty' || (det && det.kind === 'empty')) {
           updateStatus('Эта ячейка точно пустая по схеме — открывать её не нужно.', '#cccccc');
         } else {
           updateStatus('Сначала выбери инструмент в панели сверху.', '#ffcc66');
@@ -672,6 +852,11 @@
       // Режим стирания
       if (selectedTool.type === 'erase') {
         if (data.item) {
+          if (data.item.auto) {
+            flashBlocked(r, c);
+            updateStatus('Эта бомба обнаружена автоматически по схеме — стирать её не нужно. Если это неверно, ошибка в других отметках: сотри их.', '#ffcc66');
+            return;
+          }
           const returned = COST[data.item.type];
           data.item = null;
           refresh();
@@ -682,8 +867,8 @@
           refresh();
           renderToolbar();
           updateStatus(`Метка «пусто» снята, возвращено ${COST.empty} энергии. Осталось: ${currentEnergy()}.`);
-        } else if (lock === 'bomb') {
-          updateStatus('Эта пометка вычислена по схеме: здесь может быть только ненужная бомба. Она пересчитается, когда изменишь расстановку.', '#ffcc66');
+        } else if ((det && det.kind === 'bomb') || lock === 'bomb') {
+          updateStatus('Эта пометка вычислена автоматически: здесь точно бомба. Она пересчитается, когда изменишь расстановку.', '#ffcc66');
         } else {
           updateStatus('Здесь и так пусто.', '#ffcc66');
         }
@@ -697,16 +882,17 @@
           updateStatus('В этой ячейке стоит предмет — пометить её пустой нельзя.', '#ff6666');
           return;
         }
+        if ((det && det.kind === 'bomb') || lock === 'bomb') {
+          flashBlocked(r, c);
+          updateStatus('Здесь точно бомба по схеме — пометить ячейку пустой нельзя.', '#ff6666');
+          return;
+        }
         if (data.markedEmpty) {
           updateStatus('Эта ячейка уже помечена как пустая.', '#ffcc66');
           return;
         }
         if (lock === 'empty') {
           updateStatus('Эта ячейка и так точно пустая по схеме — отдельная метка не нужна, энергия не тратится.');
-          return;
-        }
-        if (lock === 'bomb') {
-          updateStatus('Эта ячейка уже мертва по схеме (там только ненужная бомба) — отдельная метка не нужна, энергия не тратится.');
           return;
         }
         const energy = currentEnergy();
@@ -741,12 +927,15 @@
         return;
       }
 
-      if (lock === 'bomb') {
-        const fits = poss.some(p => p.type === type && p.color === color);
-        if (!fits) {
-          const cols = [...new Set(poss.map(p => p.color))].map(cl => colorNames[cl]).join(', ');
+      if ((det && det.kind === 'bomb') || lock === 'bomb') {
+        if (type !== 'bomb') {
           flashBlocked(r, c);
-          updateStatus(`Здесь по схеме может быть только бомба (${cols}) — она для победы не нужна. Энергию на эту ячейку не трать.`, '#ff6666');
+          updateStatus('Здесь по схеме точно бомба — ключей в этой ячейке не бывает.', '#ff6666');
+          return;
+        }
+        if (!poss.some(p => p.type === type && p.color === color)) {
+          flashBlocked(r, c);
+          updateStatus(`Здесь может быть только бомба другого цвета — ${colorNames[color]} бомба сюда не встанет.`, '#ff6666');
           return;
         }
       }
