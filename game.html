@@ -184,11 +184,18 @@
     const COST_OPEN = 5;
     const COST_HINT = 6;
 
-   // Настройка сложности: во сколько раз ключи чаще появляются
+    // Настройка сложности: во сколько раз ключи чаще появляются
     // в соответствующей зоне поля, чем в углах.
-    const WEIGHT_CENTER = 8; // центральные ячейки
-    const WEIGHT_EDGE   = 2; // края без углов
-    const WEIGHT_CORNER = 1; // углы — редко, но бывают
+    const WEIGHT_CENTER = 12; // центральные ячейки
+    const WEIGHT_EDGE   = 2;  // края без углов
+    const WEIGHT_CORNER = 1;  // углы — редко, но бывают
+
+    // Жёсткие требования к раскладке: доска принимается, только если
+    // ключи распределены по зонам так. Это гарантирует сложность,
+    // а не оставляет её на волю случая.
+    const MIN_KEYS_CENTER = 2; // минимум ключей в центре
+    const MAX_KEYS_CORNER = 1; // максимум ключей в углах
+    const MAX_KEYS_EDGE   = 3; // максимум ключей на краях
 
     const colors = ['red', 'blue', 'yellow'];
     const keysConfig = { red: 2, blue: 2, yellow: 1 };
@@ -259,6 +266,32 @@
       return candidates[candidates.length - 1];
     }
 
+    // Зона ячейки: центр / край / угол — для проверки сложности доски
+    function zoneOf(r, c) {
+      const d = Math.abs(r - (GRID_SIZE - 1) / 2) + Math.abs(c - (GRID_SIZE - 1) / 2);
+      if (d <= 1) return 'center';
+      if (d <= 2) return 'edge';
+      return 'corner';
+    }
+
+    function keyZoneCounts() {
+      const counts = { center: 0, edge: 0, corner: 0 };
+      for (let r = 0; r < GRID_SIZE; r++)
+        for (let c = 0; c < GRID_SIZE; c++) {
+          const cell = grid[r][c];
+          if (cell && cell.type === 'key') counts[zoneOf(r, c)]++;
+        }
+      return counts;
+    }
+
+    // Проверка: раскладка соответствует выбранной сложности?
+    function boardMeetsDifficulty() {
+      const n = keyZoneCounts();
+      return n.center >= MIN_KEYS_CENTER &&
+             n.corner <= MAX_KEYS_CORNER &&
+             n.edge   <= MAX_KEYS_EDGE;
+    }
+
     // Расставляет предметы. useWeights = true — ключи чаще в центре.
     function placeItemsList(items, useWeights) {
       for (const item of items) {
@@ -292,7 +325,10 @@
     }
 
     function generateBoard() {
-      const maxBoardAttempts = 200;
+      const maxBoardAttempts = 500;
+      let best = null;
+      let bestScore = -1;
+
       for (let attempt = 0; attempt < maxBoardAttempts; attempt++) {
         grid = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(null));
         const bombs = buildItemsList(bombsConfig, 'bomb');
@@ -304,10 +340,20 @@
           for (let r = 0; r < GRID_SIZE; r++)
             for (let c = 0; c < GRID_SIZE; c++)
               if (grid[r][c]) filled++;
-          if (filled === TOTAL_ITEMS) return;
+          if (filled === TOTAL_ITEMS) {
+            if (boardMeetsDifficulty()) return; // доска проходит по сложности
+            // Запоминаем лучшую из непрошедших — на случай, если за все
+            // попытки ни одна не подойдёт (почти невозможно)
+            const n = keyZoneCounts();
+            const score = n.center * 10 - n.corner;
+            if (score > bestScore) {
+              bestScore = score;
+              best = grid.map(row => row.slice());
+            }
+          }
         }
       }
-      grid = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(null));
+      grid = best || Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(null));
     }
 
     function initGame() {
