@@ -534,8 +534,34 @@
       }
     }
 
-    // Ставит найденные однозначные бомбы (включая «ненужные» закрытых
-    // цветов) и повторяет детекцию, пока находятся новые — каскад
+    // Инкрементальное добавление крестиков от одного предмета —
+    // без полного пересчёта. Нужна, чтобы авто-бомба мгновенно
+    // «закрывала» свой цвет соседним ячейкам.
+    function addCrossesFromItem(r, c) {
+      const item = cells[r][c].item;
+      if (!item) return;
+      for (const [nr, nc] of getNeighbors(r, c)) {
+        const target = cells[nr][nc];
+        if (target.markedEmpty) continue;
+        target.crosses.add(item.color);
+      }
+    }
+
+    // Ставит авто-бомбу со всеми проверками правил игры:
+    // ячейка свободна, цвет не запрещён соседями, такие бомбы ещё остались
+    function placeAutoBomb(r, c, color) {
+      const data = cells[r][c];
+      if (data.item || data.markedEmpty) return false;
+      if (data.crosses.has(color)) return false;       // рядом уже есть такой цвет
+      if (remaining('bomb', color) <= 0) return false; // таких бомб больше нет
+      data.item = { type: 'bomb', color, auto: true };
+      addCrossesFromItem(r, c);
+      return true;
+    }
+
+    // Ставит найденные однозначные бомбы и повторяет детекцию каскадом.
+    // Каждая установка сразу обновляет крестики соседям, поэтому две
+    // бомбы одного цвета физически не могут оказаться рядом.
     function autoDetectLoop() {
       let autoPlaced = 0;
       for (let iter = 0; iter < 15; iter++) {
@@ -547,33 +573,38 @@
           for (let c = 0; c < GRID_SIZE; c++) {
             const det = detected[r + '-' + c];
             if (det && det.kind === 'bomb' && det.color) {
-              cells[r][c].item = { type: 'bomb', color: det.color, auto: true };
-              changed = true;
-              autoPlaced++;
+              if (placeAutoBomb(r, c, det.color)) {
+                changed = true;
+                autoPlaced++;
+              }
             }
           }
         }
 
-        // 2) Страховка: если решатель не сработал (например, слишком много
-        // вариантов), но в ячейке по простым правилам может быть только
-        // бомба одного цвета — тоже проставляем её автоматически
-        for (let r = 0; r < GRID_SIZE; r++) {
-          for (let c = 0; c < GRID_SIZE; c++) {
-            const data = cells[r][c];
-            if (data.item || data.markedEmpty) continue;
-            const poss = possibleItems(r, c);
-            if (poss.length === 0) continue;
-            if (!poss.every(p => p.type === 'bomb')) continue;
-            const cols = [...new Set(poss.map(p => p.color))];
-            if (cols.length !== 1) continue;
-            cells[r][c].item = { type: 'bomb', color: cols[0], auto: true };
-            changed = true;
-            autoPlaced++;
+        // 2) Страховка: если решатель не сработал, но в ячейке по простым
+        // правилам может быть только бомба одного цвета — ставим её.
+        // Работает только когда на шаге 1 ничего не нашлось, чтобы
+        // не спорить со свежим решателем.
+        if (!changed) {
+          for (let r = 0; r < GRID_SIZE; r++) {
+            for (let c = 0; c < GRID_SIZE; c++) {
+              const data = cells[r][c];
+              if (data.item || data.markedEmpty) continue;
+              const poss = possibleItems(r, c);
+              if (poss.length === 0) continue;
+              if (!poss.every(p => p.type === 'bomb')) continue;
+              const cols = [...new Set(poss.map(p => p.color))];
+              if (cols.length !== 1) continue;
+              if (placeAutoBomb(r, c, cols[0])) {
+                changed = true;
+                autoPlaced++;
+              }
+            }
           }
         }
 
         if (!changed) break;
-        recomputeCrosses();
+        recomputeCrosses(); // полная нормализация крестиков после итерации
       }
       return autoPlaced;
     }
