@@ -14,15 +14,31 @@
       margin: 0;
       padding: 20px;
     }
-    h1 { margin-bottom: 6px; }
-    .subtitle {
-      color: #999;
-      font-size: 14px;
-      margin-bottom: 14px;
+    h1 { margin-bottom: 10px; }
+
+    #stats {
+      margin-bottom: 10px;
+      font-size: 18px;
       text-align: center;
     }
+    #stats .low { color: #ff6666; }
 
-    /* Панель выбора предметов: ключи в один ряд, бомбы в другой */
+    #banner {
+      display: none;
+      max-width: 600px;
+      margin-bottom: 10px;
+      padding: 10px 16px;
+      border-radius: 8px;
+      text-align: center;
+      font-weight: bold;
+      font-size: 15px;
+      border: 1px solid #66dd66;
+      background: rgba(60, 160, 60, 0.18);
+      color: #aaffaa;
+    }
+    #banner.show { display: block; animation: bannerFade 0.4s ease; }
+    @keyframes bannerFade { from { opacity: 0; } to { opacity: 1; } }
+
     #toolbar {
       display: flex;
       flex-direction: column;
@@ -75,8 +91,9 @@
     }
     .tool-erase { border-color: #666; color: #ddd; }
     .tool-erase.selected { border-color: #ff6666; }
+    .tool-empty { border-color: #556; color: #ccd; }
+    .tool-empty.selected { border-color: #88aaff; box-shadow: 0 0 8px rgba(120,150,255,0.35); }
 
-    /* Подсказки к цветам */
     .dot {
       display: inline-block;
       width: 14px;
@@ -105,7 +122,8 @@
       justify-content: center;
       align-items: center;
       position: relative;
-      transition: transform 0.1s, box-shadow 0.2s, background-color 0.25s;
+      transition: transform 0.1s, box-shadow 0.2s, background-color 0.25s,
+                  border-color 0.25s, opacity 0.25s;
       overflow: hidden;
     }
     .cell:hover {
@@ -121,7 +139,76 @@
       z-index: 1;
     }
 
-    /* Крестики «здесь цвета нет» — в углах ячейки */
+    /* Мёртвые ячейки: точно пустые и «только ненужная бомба» */
+    .cell.marked-empty {
+      background: #1a1a1a;
+      border-color: #333;
+      opacity: 0.55;
+      cursor: default;
+    }
+    .cell.marked-empty:hover { box-shadow: none; border-color: #333; }
+    .empty-mark {
+      font-size: 13px;
+      font-weight: bold;
+      color: #777;
+      letter-spacing: 1px;
+    }
+
+    /* Рекомендации по активным ячейкам */
+    .cell.rec-open {
+      border-color: #66dd66;
+      box-shadow: 0 0 10px rgba(80, 220, 80, 0.45);
+    }
+    .cell.rec-hint {
+      border-color: #ddaa44;
+      box-shadow: 0 0 10px rgba(240, 180, 60, 0.3);
+    }
+    .cell.rec-hint-good {
+      border-color: #ffcc00;
+      box-shadow: 0 0 12px rgba(255, 204, 0, 0.5);
+    }
+    .cell.rec-danger {
+      border-color: #ff6666;
+      animation: dangerPulse 1.2s ease-in-out infinite;
+    }
+    @keyframes dangerPulse {
+      0%, 100% { box-shadow: 0 0 8px rgba(255,90,90,0.35); }
+      50%      { box-shadow: 0 0 16px rgba(255,90,90,0.7); }
+    }
+    .badge {
+      position: absolute;
+      bottom: 3px;
+      right: 5px;
+      font-size: 10px;
+      font-weight: bold;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 1px 5px;
+      border-radius: 6px;
+      pointer-events: none;
+      z-index: 2;
+    }
+    .badge-open    { color: #aaffaa; }
+    .badge-hint    { color: #ffd97a; }
+    .badge-empty   { color: #bbb; }
+
+    /* Надпись «использовать подсказку» в ячейках с возможной бомбой */
+    .danger-label {
+      position: absolute;
+      bottom: 3px;
+      left: 4px;
+      right: 4px;
+      font-size: 9px;
+      font-weight: bold;
+      line-height: 1.1;
+      text-align: center;
+      background: rgba(0, 0, 0, 0.65);
+      color: #ff9999;
+      padding: 2px 3px;
+      border-radius: 6px;
+      pointer-events: none;
+      z-index: 2;
+    }
+
     .cross {
       position: absolute;
       font-size: 15px;
@@ -137,7 +224,6 @@
     .pos-tr { top: 3px; right: 5px; }
     .pos-bl { bottom: 3px; left: 5px; }
 
-    /* Подсветка ячейки, где текущий предмет поставить нельзя */
     .cell.blocked-flash {
       animation: blockedFlash 0.5s ease;
     }
@@ -151,7 +237,8 @@
       min-height: 26px;
       text-align: center;
       font-weight: bold;
-      font-size: 16px;
+      font-size: 15px;
+      max-width: 640px;
     }
     .btn-reset {
       margin-top: 8px;
@@ -168,7 +255,16 @@
 </head>
 <body>
   <h1>Шпаргалка — Лига</h1>
-  
+
+  <div id="stats">
+    Энергия: <span id="energy">100</span> |
+    Ключи: <span id="keysCount">0</span>/5 |
+    Бомбы: <span id="bombsCount">0</span>/5 |
+    Пустых: <span id="emptyCount">0</span>
+  </div>
+
+  <div id="banner"></div>
+
   <div id="toolbar"></div>
 
   <div id="grid"></div>
@@ -178,6 +274,8 @@
 
   <script>
     const GRID_SIZE = 4;
+    const ENERGY_START = 100;
+    const COST = { bomb: 6, key: 11, empty: 6 };
 
     const colors = ['red', 'blue', 'yellow'];
     const colorNames = { red: 'красный', blue: 'синий', yellow: 'жёлтый' };
@@ -186,15 +284,15 @@
       bomb: { red: 2, blue: 2, yellow: 1 }
     };
     const itemEmoji = { key: '🔑', bomb: '💣' };
-    const itemNames = { key: 'ключ', bomb: 'бомба' };
+    const itemNames = { key: 'ключ', bomb: 'бомба', empty: 'пусто' };
 
-    // Состояние
-    let cells = [];        // grid[r][c] = { item: null|{type,color}, crosses: Set }
-    let selectedTool = null; // { type, color } | { type: 'erase' }
+    let cells = [];
+    let selectedTool = null;
 
     const gridEl = document.getElementById('grid');
     const toolbarEl = document.getElementById('toolbar');
     const statusEl = document.getElementById('status');
+    const bannerEl = document.getElementById('banner');
 
     function getNeighbors(r, c) {
       const dirs = [
@@ -214,11 +312,12 @@
 
     function initBoard() {
       cells = Array.from({ length: GRID_SIZE }, () =>
-        Array.from({ length: GRID_SIZE }, () => ({ item: null, crosses: new Set() }))
+        Array.from({ length: GRID_SIZE }, () => ({ item: null, crosses: new Set(), markedEmpty: false }))
       );
       selectedTool = null;
       renderToolbar();
       renderGrid();
+      refresh();
       updateStatus('Выбери предмет и кликни по ячейке.');
     }
 
@@ -232,19 +331,62 @@
       return n;
     }
 
+    function totals(type) {
+      let n = 0;
+      for (const color of colors) n += placedCount(type, color);
+      return n;
+    }
+
     function totalPlaced() {
+      return totals('key') + totals('bomb');
+    }
+
+    function markedEmptyCount() {
       let n = 0;
       for (let r = 0; r < GRID_SIZE; r++)
         for (let c = 0; c < GRID_SIZE; c++)
-          if (cells[r][c].item) n++;
+          if (cells[r][c].markedEmpty) n++;
       return n;
+    }
+
+    function currentEnergy() {
+      return ENERGY_START - COST.bomb * totals('bomb')
+                           - COST.key * totals('key')
+                           - COST.empty * markedEmptyCount();
     }
 
     function remaining(type, color) {
       return itemsConfig[type][color] - placedCount(type, color);
     }
 
-    // Создаёт кнопку одного предмета
+    function possibleItems(r, c) {
+      const data = cells[r][c];
+      if (data.item || data.markedEmpty) return [];
+      const res = [];
+      for (const color of colors) {
+        if (data.crosses.has(color)) continue;
+        if (remaining('key', color) > 0)  res.push({ type: 'key',  color });
+        if (remaining('bomb', color) > 0) res.push({ type: 'bomb', color });
+      }
+      return res;
+    }
+
+    // Цвет «закрыт»: все его ключи найдены, а бомба(ы) ещё на поле.
+    // Такие бомбы для победы не нужны, но открытие любой бомбы — проигрыш.
+    function closedBombColor(color) {
+      return remaining('key', color) === 0 && remaining('bomb', color) > 0;
+    }
+
+    // Вычисляемая блокировка ячейки: 'empty' | 'bomb' | null
+    function cellLockState(r, c) {
+      const data = cells[r][c];
+      if (data.item || data.markedEmpty) return null;
+      const poss = possibleItems(r, c);
+      if (poss.length === 0) return 'empty';
+      if (poss.every(p => p.type === 'bomb' && closedBombColor(p.color))) return 'bomb';
+      return null;
+    }
+
     function createToolButton(type, color) {
       const left = remaining(type, color);
       const btn = document.createElement('div');
@@ -260,11 +402,9 @@
           selectedTool = (selectedTool && selectedTool.type === type && selectedTool.color === color)
             ? null : { type, color };
           renderToolbar();
-          if (selectedTool) {
-            updateStatus(`Выбрано: ${colorNames[color]} ${itemNames[type]}. Кликни по ячейке.`);
-          } else {
-            updateStatus('Выбери предмет и кликни по ячейке.');
-          }
+          updateStatus(selectedTool
+            ? `Выбрано: ${colorNames[color]} ${itemNames[type]} (−${COST[type]} энергии). Кликни по ячейке.`
+            : 'Выбери предмет и кликни по ячейке.');
         };
       }
       return btn;
@@ -273,46 +413,53 @@
     function renderToolbar() {
       toolbarEl.innerHTML = '';
 
-      // Ряд с ключами
       const keysRow = document.createElement('div');
       keysRow.className = 'tool-row';
       const keysLabel = document.createElement('span');
       keysLabel.className = 'row-label';
       keysLabel.textContent = '🔑';
       keysRow.appendChild(keysLabel);
-      for (const color of colors) {
-        keysRow.appendChild(createToolButton('key', color));
-      }
+      for (const color of colors) keysRow.appendChild(createToolButton('key', color));
       toolbarEl.appendChild(keysRow);
 
-      // Ряд с бомбами
       const bombsRow = document.createElement('div');
       bombsRow.className = 'tool-row';
       const bombsLabel = document.createElement('span');
       bombsLabel.className = 'row-label';
       bombsLabel.textContent = '💣';
       bombsRow.appendChild(bombsLabel);
-      for (const color of colors) {
-        bombsRow.appendChild(createToolButton('bomb', color));
-      }
+      for (const color of colors) bombsRow.appendChild(createToolButton('bomb', color));
       toolbarEl.appendChild(bombsRow);
 
-      // Кнопка «Стереть»
-      const eraseRow = document.createElement('div');
-      eraseRow.className = 'tool-row';
+      const auxRow = document.createElement('div');
+      auxRow.className = 'tool-row';
+
+      const emptyBtn = document.createElement('div');
+      emptyBtn.className = 'tool tool-empty' +
+        (selectedTool && selectedTool.type === 'empty' ? ' selected' : '');
+      emptyBtn.innerHTML = `⬜ Пусто <span class="count">−${COST.empty}</span>`;
+      emptyBtn.onclick = () => {
+        selectedTool = (selectedTool && selectedTool.type === 'empty') ? null : { type: 'empty' };
+        renderToolbar();
+        updateStatus(selectedTool
+          ? 'Режим «Пусто»: кликни по ячейке, которая точно пустая. Крестики там ставиться не будут.'
+          : 'Выбери предмет и кликни по ячейке.');
+      };
+      auxRow.appendChild(emptyBtn);
+
       const erase = document.createElement('div');
       erase.className = 'tool tool-erase' + (selectedTool && selectedTool.type === 'erase' ? ' selected' : '');
       erase.textContent = '🧹 Стереть';
       erase.onclick = () => {
         selectedTool = (selectedTool && selectedTool.type === 'erase') ? null : { type: 'erase' };
         renderToolbar();
-        updateStatus(selectedTool ? 'Режим стирания: кликни по ячейке с предметом.' : 'Выбери предмет и кликни по ячейке.');
+        updateStatus(selectedTool ? 'Режим стирания: кликни по ячейке с меткой (энергия вернётся).' : 'Выбери предмет и кликни по ячейке.');
       };
-      eraseRow.appendChild(erase);
-      toolbarEl.appendChild(eraseRow);
+      auxRow.appendChild(erase);
+
+      toolbarEl.appendChild(auxRow);
     }
 
-    // Пересчитывает крестики по всем установленным предметам
     function recomputeCrosses() {
       for (let r = 0; r < GRID_SIZE; r++)
         for (let c = 0; c < GRID_SIZE; c++)
@@ -323,7 +470,9 @@
           const item = cells[r][c].item;
           if (!item) continue;
           for (const [nr, nc] of getNeighbors(r, c)) {
-            cells[nr][nc].crosses.add(item.color);
+            const target = cells[nr][nc];
+            if (target.markedEmpty) continue;
+            target.crosses.add(item.color);
           }
         }
       }
@@ -332,24 +481,24 @@
     function renderCell(r, c) {
       const cellEl = document.getElementById(`cell-${r}-${c}`);
       const data = cells[r][c];
+      const lock = cellLockState(r, c);
 
-      // Фон и предмет
       cellEl.className = 'cell';
-      cellEl.classList.remove('bg-red', 'bg-blue', 'bg-yellow');
       if (data.item) {
         cellEl.classList.add('bg-' + data.item.color);
         cellEl.innerHTML = `<span class="icon">${itemEmoji[data.item.type]}</span>`;
+      } else if (data.markedEmpty || lock === 'empty' || lock === 'bomb') {
+        cellEl.classList.add('marked-empty');
+        cellEl.innerHTML = `<span class="empty-mark">пусто</span>`;
       } else {
         cellEl.innerHTML = '';
-      }
-
-      // Крестики: красный — верх-лево, синий — верх-право, жёлтый — низ-лево
-      const positions = { red: 'pos-tl', blue: 'pos-tr', yellow: 'pos-bl' };
-      for (const color of data.crosses) {
-        const span = document.createElement('span');
-        span.className = `cross cross-${color} ${positions[color]}`;
-        span.textContent = '✗';
-        cellEl.appendChild(span);
+        const positions = { red: 'pos-tl', blue: 'pos-tr', yellow: 'pos-bl' };
+        for (const color of data.crosses) {
+          const span = document.createElement('span');
+          span.className = `cross cross-${color} ${positions[color]}`;
+          span.textContent = '✗';
+          cellEl.appendChild(span);
+        }
       }
     }
 
@@ -367,6 +516,86 @@
       }
     }
 
+    function renderRecommendations() {
+      for (let r = 0; r < GRID_SIZE; r++) {
+        for (let c = 0; c < GRID_SIZE; c++) {
+          const cellEl = document.getElementById(`cell-${r}-${c}`);
+          const data = cells[r][c];
+          if (data.item) continue;
+
+          const lock = cellLockState(r, c);
+
+          // Мёртвые ячейки — только бейдж, без подсветки
+          if (lock === 'empty' || lock === 'bomb' || data.markedEmpty) {
+            const b = document.createElement('span');
+            b.className = 'badge badge-empty';
+            b.textContent = 'пусто';
+            cellEl.appendChild(b);
+            continue;
+          }
+
+          const poss = possibleItems(r, c);
+
+          // Может ли в ячейке лежать хоть какая-то бомба (любого цвета)?
+          const mayBomb = poss.some(p => p.type === 'bomb');
+
+          if (mayBomb) {
+            // Бомба возможна — открывать напрямую нельзя, только подсказкой
+            cellEl.classList.add('rec-danger');
+            const d = document.createElement('span');
+            d.className = 'danger-label';
+            d.textContent = '💣 использовать подсказку';
+            cellEl.appendChild(d);
+          } else {
+            // Бомба исключена: только ключи (или пусто) — можно открывать смело
+            cellEl.classList.add('rec-open');
+            const b = document.createElement('span');
+            b.className = 'badge badge-open';
+            b.textContent = '🔓 5';
+            cellEl.appendChild(b);
+          }
+        }
+      }
+    }
+
+    function updateStats() {
+      const energy = currentEnergy();
+      const energyEl = document.getElementById('energy');
+      energyEl.textContent = energy;
+      energyEl.className = energy < 6 ? 'low' : '';
+      document.getElementById('keysCount').textContent = totals('key');
+      document.getElementById('bombsCount').textContent = totals('bomb');
+      document.getElementById('emptyCount').textContent = markedEmptyCount();
+    }
+
+    function updateBanner() {
+      const bombsPlaced = totals('bomb');
+      const keysPlaced = totals('key');
+      const energy = currentEnergy();
+
+      if (keysPlaced === 5) {
+        bannerEl.textContent = '🎯 Схема готова: все ключи и бомбы расставлены!';
+        bannerEl.classList.add('show');
+      } else if (bombsPlaced === 5) {
+        bannerEl.textContent =
+          `✅ Все 5 бомб найдены! Оставшиеся ячейки можно открывать без подсказок — «Открыть» по 5 энергии. ` +
+          `Энергии (${energy}) хватит на ${Math.floor(energy / 5)} открытий.`;
+        bannerEl.classList.add('show');
+      } else {
+        bannerEl.classList.remove('show');
+      }
+    }
+
+    function refresh() {
+      recomputeCrosses();
+      for (let r = 0; r < GRID_SIZE; r++)
+        for (let c = 0; c < GRID_SIZE; c++)
+          renderCell(r, c);
+      renderRecommendations();
+      updateStats();
+      updateBanner();
+    }
+
     function flashBlocked(r, c) {
       const cellEl = document.getElementById(`cell-${r}-${c}`);
       cellEl.classList.remove('blocked-flash');
@@ -376,63 +605,134 @@
 
     function handleCellClick(r, c) {
       const data = cells[r][c];
+      const lock = cellLockState(r, c);
+      const poss = possibleItems(r, c);
 
       if (!selectedTool) {
-        updateStatus('Сначала выбери предмет в панели сверху.', '#ffcc66');
+        if (lock === 'bomb') {
+          const cols = [...new Set(poss.map(p => p.color))].map(cl => colorNames[cl]).join(', ');
+          updateStatus(`Здесь по схеме может быть только бомба (${cols}) — для победы она не нужна. Не открывай и не подсказывай эту ячейку. Если подсказка в игре показала здесь бомбу — выбери её в панели и кликни, чтобы отметить.`, '#ffcccc');
+        } else if (lock === 'empty') {
+          updateStatus('Эта ячейка точно пустая по схеме — открывать её не нужно.', '#cccccc');
+        } else {
+          updateStatus('Сначала выбери инструмент в панели сверху.', '#ffcc66');
+        }
         return;
       }
 
       // Режим стирания
       if (selectedTool.type === 'erase') {
-        if (!data.item) {
+        if (data.item) {
+          const returned = COST[data.item.type];
+          data.item = null;
+          refresh();
+          renderToolbar();
+          updateStatus(`Предмет убран, возвращено ${returned} энергии. Осталось: ${currentEnergy()}.`);
+        } else if (data.markedEmpty) {
+          data.markedEmpty = false;
+          refresh();
+          renderToolbar();
+          updateStatus(`Метка «пусто» снята, возвращено ${COST.empty} энергии. Осталось: ${currentEnergy()}.`);
+        } else if (lock === 'bomb') {
+          updateStatus('Эта пометка вычислена по схеме: здесь может быть только ненужная бомба. Она пересчитается, когда изменишь расстановку.', '#ffcc66');
+        } else {
           updateStatus('Здесь и так пусто.', '#ffcc66');
-          return;
         }
-        data.item = null;
-        recomputeCrosses();
-        renderAll();
-        renderToolbar();
-        updateStatus('Предмет убран.');
         return;
       }
 
-      const { type, color } = selectedTool;
+      // Режим «Пусто»
+      if (selectedTool.type === 'empty') {
+        if (data.item) {
+          flashBlocked(r, c);
+          updateStatus('В этой ячейке стоит предмет — пометить её пустой нельзя.', '#ff6666');
+          return;
+        }
+        if (data.markedEmpty) {
+          updateStatus('Эта ячейка уже помечена как пустая.', '#ffcc66');
+          return;
+        }
+        if (lock === 'empty') {
+          updateStatus('Эта ячейка и так точно пустая по схеме — отдельная метка не нужна, энергия не тратится.');
+          return;
+        }
+        if (lock === 'bomb') {
+          updateStatus('Эта ячейка уже мертва по схеме (там только ненужная бомба) — отдельная метка не нужна, энергия не тратится.');
+          return;
+        }
+        const energy = currentEnergy();
+        if (energy < COST.empty) {
+          flashBlocked(r, c);
+          updateStatus(`Не хватает энергии: нужно ${COST.empty}, осталось ${energy}.`, '#ff6666');
+          return;
+        }
+        data.markedEmpty = true;
+        refresh();
+        renderToolbar();
+        selectedTool = null;
+        renderToolbar();
+        updateStatus(`Ячейка помечена пустой (−${COST.empty}). Энергия: ${currentEnergy()}.`);
+        return;
+      }
 
-      // Ячейка занята
+      // Обычные предметы: ключ или бомба
+      const { type, color } = selectedTool;
+      const cost = COST[type];
+      const energy = currentEnergy();
+
+      if (data.markedEmpty) {
+        flashBlocked(r, c);
+        updateStatus('Эта ячейка помечена как пустая — здесь нет ни ключей, ни бомб.', '#ff6666');
+        return;
+      }
+
+      if (lock === 'empty') {
+        flashBlocked(r, c);
+        updateStatus('Эта ячейка точно пустая по схеме — предметы сюда не встанут.', '#ff6666');
+        return;
+      }
+
+      if (lock === 'bomb') {
+        const fits = poss.some(p => p.type === type && p.color === color);
+        if (!fits) {
+          const cols = [...new Set(poss.map(p => p.color))].map(cl => colorNames[cl]).join(', ');
+          flashBlocked(r, c);
+          updateStatus(`Здесь по схеме может быть только бомба (${cols}) — она для победы не нужна. Энергию на эту ячейку не трать.`, '#ff6666');
+          return;
+        }
+      }
+
+      if (energy < cost) {
+        flashBlocked(r, c);
+        updateStatus(`Не хватает энергии: нужно ${cost}, осталось ${energy}.`, '#ff6666');
+        return;
+      }
+
       if (data.item) {
         flashBlocked(r, c);
         updateStatus('Эта ячейка уже занята. Сотри предмет, чтобы поставить новый.', '#ff6666');
         return;
       }
 
-      // Нарушение правила соседства того же цвета
       if (data.crosses.has(color)) {
         flashBlocked(r, c);
         updateStatus(`Здесь не может быть ${colorNames[color]} предмета — рядом уже стоит ${colorNames[color]}.`, '#ff6666');
         return;
       }
 
-      // Ставим предмет
       data.item = { type, color };
-      recomputeCrosses();
-      renderAll();
+      refresh();
+      const wasComplete = totalPlaced() === 10;
+      renderToolbar();
+      selectedTool = null;
+      renderToolbar();
 
       const left = remaining(type, color);
-      if (totalPlaced() === 10) {
-        updateStatus('Схема готова! Все 10 предметов расставлены. 🎯', '#aaffaa');
+      if (wasComplete) {
+        updateStatus(`Схема готова! Энергия: ${currentEnergy()}. 🎯`, '#aaffaa');
       } else {
-        updateStatus(`${colorNames[color]} ${itemNames[type]} установлен. Осталось: ${left}.`);
+        updateStatus(`${colorNames[color]} ${itemNames[type]} установлен (−${cost}). Осталось: ${left}. Энергия: ${currentEnergy()}.`);
       }
-
-      renderToolbar();
-      selectedTool = null; // сбрасываем выбор после установки
-      renderToolbar();
-    }
-
-    function renderAll() {
-      for (let r = 0; r < GRID_SIZE; r++)
-        for (let c = 0; c < GRID_SIZE; c++)
-          renderCell(r, c);
     }
 
     function updateStatus(text, color = '#e0e0e0') {
