@@ -209,6 +209,24 @@
       z-index: 2;
     }
 
+    /* Надпись «открыть без подсказки» в безопасных ячейках */
+    .open-label {
+      position: absolute;
+      bottom: 3px;
+      left: 4px;
+      right: 4px;
+      font-size: 9px;
+      font-weight: bold;
+      line-height: 1.1;
+      text-align: center;
+      background: rgba(0, 0, 0, 0.65);
+      color: #aaffaa;
+      padding: 2px 3px;
+      border-radius: 6px;
+      pointer-events: none;
+      z-index: 2;
+    }
+
     .cross {
       position: absolute;
       font-size: 15px;
@@ -346,6 +364,17 @@
       for (let r = 0; r < GRID_SIZE; r++)
         for (let c = 0; c < GRID_SIZE; c++)
           if (cells[r][c].markedEmpty) n++;
+      return n;
+    }
+
+    // Сколько ячеек на поле ещё не занято предметами и метками «пусто»
+    function freeCellsCount() {
+      let n = 0;
+      for (let r = 0; r < GRID_SIZE; r++)
+        for (let c = 0; c < GRID_SIZE; c++) {
+          const d = cells[r][c];
+          if (!d.item && !d.markedEmpty) n++;
+        }
       return n;
     }
 
@@ -517,6 +546,8 @@
     }
 
     function renderRecommendations() {
+      const freeLeft = freeCellsCount(); // сколько ячеек ещё не занято ничем
+
       for (let r = 0; r < GRID_SIZE; r++) {
         for (let c = 0; c < GRID_SIZE; c++) {
           const cellEl = document.getElementById(`cell-${r}-${c}`);
@@ -525,12 +556,29 @@
 
           const lock = cellLockState(r, c);
 
-          // Мёртвые ячейки — только бейдж, без подсветки
-          if (lock === 'empty' || lock === 'bomb' || data.markedEmpty) {
+          // Мёртвые ячейки
+          if (data.markedEmpty || lock === 'bomb') {
             const b = document.createElement('span');
             b.className = 'badge badge-empty';
             b.textContent = 'пусто';
             cellEl.appendChild(b);
+            continue;
+          }
+          if (lock === 'empty') {
+            // Если это последняя незанятая ячейка на поле — она автоматически
+            // становится безопасной для открытия без подсказки
+            if (freeLeft === 1) {
+              cellEl.classList.add('rec-open');
+              const d = document.createElement('span');
+              d.className = 'open-label';
+              d.textContent = '🔓 открыть без подсказки';
+              cellEl.appendChild(d);
+            } else {
+              const b = document.createElement('span');
+              b.className = 'badge badge-empty';
+              b.textContent = 'пусто';
+              cellEl.appendChild(b);
+            }
             continue;
           }
 
@@ -539,7 +587,7 @@
           // Может ли в ячейке лежать хоть какая-то бомба (любого цвета)?
           const mayBomb = poss.some(p => p.type === 'bomb');
 
-          if (mayBomb) {
+          if (mayBomb && freeLeft > 1) {
             // Бомба возможна — открывать напрямую нельзя, только подсказкой
             cellEl.classList.add('rec-danger');
             const d = document.createElement('span');
@@ -547,12 +595,13 @@
             d.textContent = '💣 использовать подсказку';
             cellEl.appendChild(d);
           } else {
-            // Бомба исключена: только ключи (или пусто) — можно открывать смело
+            // Бомба исключена ИЛИ это последняя свободная ячейка —
+            // можно открывать смело, подсказка не нужна
             cellEl.classList.add('rec-open');
-            const b = document.createElement('span');
-            b.className = 'badge badge-open';
-            b.textContent = '🔓 5';
-            cellEl.appendChild(b);
+            const d = document.createElement('span');
+            d.className = 'open-label';
+            d.textContent = '🔓 открыть без подсказки';
+            cellEl.appendChild(d);
           }
         }
       }
