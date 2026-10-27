@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Лига</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background: #111;
+      color: #e0e0e0;
+      margin: 0;
+      padding: 20px;
+    }
+    h1 { margin-bottom: 4px; }
+    #stats {
+      margin-bottom: 16px;
+      font-size: 20px;
+      text-align: center;
+    }
+    .keys-found-list, .bombs-hinted-list {
+      display: inline-block;
+      margin: 0 12px;
+      font-size: 14px;
+      border-bottom: 1px solid #555;
+      padding-bottom: 4px;
+    }
+    #grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+      width: 90vw;
+      max-width: 768px;
+    }
+    .cell {
+      aspect-ratio: 1;
+      background: #222;
+      border: 1px solid #444;
+      border-radius: 8px;
+      cursor: pointer;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      position: relative;
+      transition: transform 0.1s, box-shadow 0.2s, background-color 0.3s,
+                  opacity 0.4s, filter 0.4s;
+      overflow: hidden;
+    }
+    .cell:hover:not(.opened) {
+      background: #333;
+      box-shadow: 0 0 8px rgba(255,255,255,0.1);
+    }
+    .cell.opened { border-color: #555; cursor: default; }
+    .cell.menu-open {
+      box-shadow: 0 0 10px rgba(255,255,255,0.35);
+      border-color: #888;
+    }
+
+    .cell.hinted {
+      opacity: 0.65;
+      filter: saturate(0.65) brightness(0.85);
+      animation: hintBreath 2s ease-in-out infinite;
+    }
+    @keyframes hintBreath {
+      0%, 100% { opacity: 0.65; }
+      50%      { opacity: 0.85; }
+    }
+    .cell.hint-flash {
+      animation: hintFlash 0.5s ease;
+    }
+    @keyframes hintFlash {
+      0%   { transform: scale(1); }
+      40%  { transform: scale(1.08); }
+      100% { transform: scale(1); }
+    }
+
+    .bg-red { background: #cc3333 !important; }
+    .bg-blue { background: #3366cc !important; }
+    .bg-yellow { background: #cccc33 !important; }
+    .bg-empty { background: #aaaaaa !important; }
+    .icon-light {
+      color: #fff;
+      text-shadow: 0 0 4px rgba(0,0,0,0.5);
+      font-size: 36px;
+    }
+    .cell.reveal-anim {
+      animation: revealPulse 0.4s ease;
+    }
+    @keyframes revealPulse {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.1); }
+      100% { transform: scale(1); }
+    }
+
+    button {
+      padding: 10px 16px;
+      margin-right: 8px;
+      margin-bottom: 4px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: bold;
+      font-size: 14px;
+    }
+    .btn-open { background: #0055aa; color: white; }
+    .btn-hint { background: #cc9900; color: white; }
+    .btn-open:hover { background: #0077cc; }
+    .btn-hint:hover { background: #e6b800; }
+
+    /* Затемнение поверх игрового поля после победы/проигрыша */
+    #gameOverOverlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.7);
+      display: none;               /* скрыто во время игры */
+      justify-content: center;
+      align-items: center;
+      z-index: 100;
+    }
+    #gameOverOverlay.show {
+      display: flex;
+      animation: overlayFade 0.4s ease;
+    }
+    @keyframes overlayFade {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
+    .overlay-box {
+      text-align: center;
+    }
+    .overlay-title {
+      font-size: 32px;
+      font-weight: bold;
+      margin-bottom: 20px;
+      text-shadow: 0 0 10px rgba(0,0,0,0.8);
+    }
+    .overlay-title.win  { color: #aaffaa; }
+    .overlay-title.lose { color: #ff5555; }
+    .btn-restart {
+      background: #0055aa;
+      color: white;
+      font-size: 18px;
+      padding: 14px 32px;
+      border-radius: 10px;
+      margin-right: 0;
+      margin-bottom: 0;
+    }
+    .btn-restart:hover { background: #0077cc; }
+
+    #message {
+      margin-top: 12px;
+      min-height: 28px;
+      text-align: center;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <h1>Лига</h1>
+  <div id="stats">
+    Энергия: <span id="energy">100</span> | Ключи: <span id="keysFound">0</span>/5
+  </div>
+  <div style="text-align:center; margin-bottom:12px;">
+    <span class="keys-found-list" id="keysList">Найдено ключей: 0</span>
+    <span class="bombs-hinted-list" id="bombsHintedList">Бомб по подсказкам: 0</span>
+  </div>
+  <div id="grid"></div>
+  <div id="message"></div>
+
+  <!-- Оверлей с кнопкой «Новая игра» — появляется по центру после победы/проигрыша -->
+  <div id="gameOverOverlay">
+    <div class="overlay-box">
+      <div class="overlay-title" id="overlayTitle"></div>
+      <button class="btn-restart" onclick="newGame()">Новая игра</button>
+    </div>
+  </div>
+
+  <script>
+    const GRID_SIZE = 4;
+    const ENERGY_START = 100;
+    const COST_OPEN = 5;
+    const COST_HINT = 6;
+
+    const colors = ['red', 'blue', 'yellow'];
+    const keysConfig = { red: 2, blue: 2, yellow: 1 };
+    const bombsConfig = { red: 2, blue: 2, yellow: 1 };
+    const TOTAL_ITEMS = 5 + 5;
+
+    let energy = ENERGY_START;
+    let keysFound = 0;
+    let gameActive = true;
+    let grid = [];
+    let hinted = [];
+    let opened = [];
+    let cellsElements = [];
+    let menuCell = null;
+
+    let foundKeysColors = [];
+    let hintedBombsColors = new Set();
+
+    function getNeighbors(r, c) {
+      const dirs = [
+        [-1,-1],[-1,0],[-1,1],
+        [0,-1],[0,1],
+        [1,-1],[1,0],[1,1]
+      ];
+      const neighbors = [];
+      for (const [dr, dc] of dirs) {
+        const nr = r + dr, nc = c + dc;
+        if (nr >= 0 && nr < GRID_SIZE && nc >= 0 && nc < GRID_SIZE) {
+          neighbors.push([nr, nc]);
+        }
+      }
+      return neighbors;
+    }
+
+    function canPlaceColorAt(r, c, color) {
+      for (const [nr, nc] of getNeighbors(r, c)) {
+        const cell = grid[nr][nc];
+        if (cell && cell.color === color) return false;
+      }
+      return true;
+    }
+
+    function placeItemsList(items) {
+      let attempts = 0;
+      const maxAttempts = 2000;
+      while (items.length > 0 && attempts < maxAttempts) {
+        attempts++;
+        const idx = Math.floor(Math.random() * items.length);
+        const item = items[idx];
+        const r = Math.floor(Math.random() * GRID_SIZE);
+        const c = Math.floor(Math.random() * GRID_SIZE);
+        if (!grid[r][c] && canPlaceColorAt(r, c, item.color)) {
+          grid[r][c] = { type: item.type, color: item.color };
+          items.splice(idx, 1);
+        }
+      }
+      return items.length === 0;
+    }
+
+    function buildItemsList(config, type) {
+      const list = [];
+      for (const color of colors) {
+        for (let i = 0; i < config[color]; i++) {
+          list.push({ type, color });
+        }
+      }
+      return list;
+    }
+
+    function generateBoard() {
+      const maxBoardAttempts = 200;
+      for (let attempt = 0; attempt < maxBoardAttempts; attempt++) {
+        grid = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(null));
+        const bombs = buildItemsList(bombsConfig, 'bomb');
+        const keys = buildItemsList(keysConfig, 'key');
+        const bombsOk = placeItemsList(bombs);
+        const keysOk = placeItemsList(keys);
+        if (bombsOk && keysOk) {
+          let filled = 0;
+          for (let r = 0; r < GRID_SIZE; r++)
+            for (let c = 0; c < GRID_SIZE; c++)
+              if (grid[r][c]) filled++;
+          if (filled === TOTAL_ITEMS) return;
+        }
+      }
+      grid = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(null));
+    }
+
+    function initGame() {
+      generateBoard();
+
+      energy = ENERGY_START;
+      keysFound = 0;
+      foundKeysColors = [];
+      hintedBombsColors = new Set();
+      gameActive = true;
+      menuCell = null;
+
+      hinted = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(false));
+      opened = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(false));
+
+      updateUI();
+      document.getElementById('message').textContent = '';
+
+      // Скрываем оверлей окончания игры
+      document.getElementById('gameOverOverlay').classList.remove('show');
+
+      const gridEl = document.getElementById('grid');
+      gridEl.innerHTML = '';
+      cellsElements = [];
+
+      for (let r = 0; r < GRID_SIZE; r++) {
+        for (let c = 0; c < GRID_SIZE; c++) {
+          const cellDiv = document.createElement('div');
+          cellDiv.className = 'cell';
+          cellDiv.dataset.r = r;
+          cellDiv.dataset.c = c;
+          cellDiv.onclick = () => handleCellClick(r, c);
+          gridEl.appendChild(cellDiv);
+          cellsElements.push(cellDiv);
+        }
+      }
+    }
+
+    function updateUI() {
+      document.getElementById('energy').textContent = energy;
+      document.getElementById('keysFound').textContent = keysFound;
+
+      document.getElementById('keysList').textContent =
+        'Найдено ключей: ' + foundKeysColors.length;
+
+      document.getElementById('bombsHintedList').textContent =
+        'Найдено бомб по подсказкам: ' + hintedBombsColors.size;
+    }
+
+    function showMessage(text, color = '#e0e0e0') {
+      const el = document.getElementById('message');
+      el.textContent = text;
+      el.style.color = color;
+    }
+
+    // Показывает оверлей «Новая игра» по центру экрана
+    function showGameOver(title, isWin) {
+      const overlay = document.getElementById('gameOverOverlay');
+      const titleEl = document.getElementById('overlayTitle');
+      titleEl.textContent = title;
+      titleEl.className = 'overlay-title ' + (isWin ? 'win' : 'lose');
+      overlay.classList.add('show');
+    }
+
+    function applyColorClass(el, color) {
+      el.classList.remove('bg-red', 'bg-blue', 'bg-yellow', 'bg-empty');
+      if (color === 'red') el.classList.add('bg-red');
+      else if (color === 'blue') el.classList.add('bg-blue');
+      else if (color === 'yellow') el.classList.add('bg-yellow');
+    }
+
+    function renderCellContent(r, c) {
+      const cellEl = cellsElements[r * GRID_SIZE + c];
+      const data = grid[r][c];
+
+      cellEl.classList.toggle('hinted', hinted[r][c] && !opened[r][c]);
+
+      if (opened[r][c]) {
+        if (!data) {
+          cellEl.classList.add('bg-empty');
+          cellEl.innerHTML = '';
+        } else if (data.type === 'bomb') {
+          applyColorClass(cellEl, data.color);
+          cellEl.innerHTML = `<span class="icon-light">💥</span>`;
+        } else {
+          applyColorClass(cellEl, data.color);
+          cellEl.innerHTML = `<span class="icon-light">🔑</span>`;
+        }
+      } else if (hinted[r][c]) {
+        if (!data) {
+          cellEl.classList.add('bg-empty');
+          cellEl.innerHTML = '';
+        } else if (data.type === 'bomb') {
+          applyColorClass(cellEl, data.color);
+          cellEl.innerHTML = `<span class="icon-light">💣</span>`;
+        } else {
+          applyColorClass(cellEl, data.color);
+          cellEl.innerHTML = `<span class="icon-light">🔑</span>`;
+        }
+      } else {
+        cellEl.classList.remove('bg-red', 'bg-blue', 'bg-yellow', 'bg-empty');
+        cellEl.innerHTML = '';
+      }
+    }
+
+    function closeMenu() {
+      if (!menuCell) return;
+      const [r, c] = menuCell;
+      const cellEl = cellsElements[r * GRID_SIZE + c];
+      cellEl.classList.remove('menu-open');
+      renderCellContent(r, c);
+      menuCell = null;
+    }
+
+    function handleCellClick(r, c) {
+      if (!gameActive) return;
+      const cellEl = cellsElements[r * GRID_SIZE + c];
+
+      if (opened[r][c]) return;
+
+      if (menuCell && (menuCell[0] !== r || menuCell[1] !== c)) {
+        closeMenu();
+      }
+
+      menuCell = [r, c];
+      cellEl.classList.add('menu-open');
+      cellEl.innerHTML = `
+        <button class="btn-open" onclick="openCell(event,${r},${c})">Открыть</button>
+        <button class="btn-hint" onclick="giveHint(event,${r},${c})">Подсказка</button>
+      `;
+    }
+
+    window.openCell = function(event, r, c) {
+      if (event) event.stopPropagation();
+
+      const cellEl = cellsElements[r * GRID_SIZE + c];
+      if (!gameActive || opened[r][c]) return;
+
+      if (energy < COST_OPEN) {
+        showMessage('Не хватает энергии!', '#ff6666');
+        return;
+      }
+
+      energy -= COST_OPEN;
+      updateUI();
+
+      const data = grid[r][c];
+      opened[r][c] = true;
+      menuCell = null;
+      cellEl.classList.remove('menu-open', 'hinted');
+      cellEl.style.animation = '';
+
+      if (!data) {
+        cellEl.classList.add('bg-empty');
+        cellEl.innerHTML = '';
+      } else if (data.type === 'bomb') {
+        gameActive = false;
+        applyColorClass(cellEl, data.color);
+        cellEl.innerHTML = `<span class="icon-light">💥</span>`;
+        showMessage('БОМБА! Игра окончена.', '#ff4444');
+        revealAllCells();
+        // Оверлей показываем чуть позже — чтобы увидеть вскрытие поля
+        setTimeout(() => showGameOver('💣 БОМБА! Проигрыш', false), 900);
+      } else {
+        keysFound++;
+        foundKeysColors.push(data.color);
+        updateUI();
+        applyColorClass(cellEl, data.color);
+        cellEl.innerHTML = `<span class="icon-light">🔑</span>`;
+        if (keysFound === 5) {
+          gameActive = false;
+          showMessage('Все ключи найдены! Победа! 🎉', '#aaffaa');
+          setTimeout(() => showGameOver('🎉 Победа!', true), 400);
+        }
+      }
+    };
+
+    window.giveHint = function(event, r, c) {
+      if (event) event.stopPropagation();
+
+      const cellEl = cellsElements[r * GRID_SIZE + c];
+      if (!gameActive || opened[r][c]) return;
+
+      if (energy < COST_HINT) {
+        showMessage('Не хватает энергии!', '#ff6666');
+        return;
+      }
+
+      energy -= COST_HINT;
+      updateUI();
+
+      const data = grid[r][c];
+      hinted[r][c] = true;
+      menuCell = null;
+      cellEl.classList.remove('menu-open');
+
+      cellEl.classList.add('hinted');
+      cellEl.classList.remove('hint-flash');
+      void cellEl.offsetWidth;
+      cellEl.classList.add('hint-flash');
+
+      if (!data) {
+        cellEl.classList.add('bg-empty');
+        cellEl.innerHTML = '';
+        showMessage('Подсказка: пусто.');
+      } else if (data.type === 'bomb') {
+        hintedBombsColors.add(data.color);
+        updateUI();
+        applyColorClass(cellEl, data.color);
+        cellEl.innerHTML = `<span class="icon-light">💣</span>`;
+        showMessage(`Подсказка: здесь бомба (${data.color})!`);
+      } else {
+        applyColorClass(cellEl, data.color);
+        cellEl.innerHTML = `<span class="icon-light">🔑</span>`;
+        showMessage(`Подсказка: здесь ключ (${data.color})!`);
+      }
+    };
+
+    function revealAllCells() {
+      for (let r = 0; r < GRID_SIZE; r++) {
+        for (let c = 0; c < GRID_SIZE; c++) {
+          const cellEl = cellsElements[r * GRID_SIZE + c];
+          if (opened[r][c]) continue;
+
+          opened[r][c] = true;
+          cellEl.classList.remove('hinted');
+          cellEl.style.animation = '';
+
+          const data = grid[r][c];
+          if (!data) {
+            cellEl.classList.add('bg-empty');
+            cellEl.innerHTML = '';
+          } else if (data.type === 'bomb') {
+            applyColorClass(cellEl, data.color);
+            cellEl.innerHTML = `<span class="icon-light">💣</span>`;
+          } else {
+            applyColorClass(cellEl, data.color);
+            cellEl.innerHTML = `<span class="icon-light">🔑</span>`;
+          }
+
+          const delay = (r + c) * 60;
+          cellEl.style.opacity = '0.2';
+          cellEl.style.transition = 'opacity 0.3s';
+          setTimeout(() => {
+            cellEl.classList.add('reveal-anim');
+            cellEl.style.opacity = '1';
+          }, delay);
+        }
+      }
+    }
+
+    window.newGame = function() {
+      initGame();
+      showMessage('Новая игра началась!');
+    };
+
+    initGame();
+  </script>
+</body>
+</html>
