@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Шпаргалка — Лига</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background: #111;
+      color: #e0e0e0;
+      margin: 0;
+      padding: 20px;
+    }
+    h1 { margin-bottom: 6px; }
+    .subtitle {
+      color: #999;
+      font-size: 14px;
+      margin-bottom: 14px;
+      text-align: center;
+    }
+
+    /* Панель выбора предметов: ключи в один ряд, бомбы в другой */
+    #toolbar {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      max-width: 768px;
+    }
+    .tool-row {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .row-label {
+      align-self: center;
+      font-size: 15px;
+      font-weight: bold;
+      color: #999;
+      margin-right: 4px;
+    }
+    .tool {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 12px;
+      border: 2px solid #444;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 15px;
+      font-weight: bold;
+      background: #222;
+      transition: transform 0.1s, border-color 0.2s, background 0.2s;
+      user-select: none;
+    }
+    .tool:hover { background: #2c2c2c; }
+    .tool.selected {
+      border-color: #ffcc00;
+      background: #333;
+      box-shadow: 0 0 8px rgba(255,204,0,0.35);
+    }
+    .tool.disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+      filter: grayscale(0.8);
+    }
+    .tool .count {
+      font-size: 12px;
+      color: #aaa;
+    }
+    .tool-erase { border-color: #666; color: #ddd; }
+    .tool-erase.selected { border-color: #ff6666; }
+
+    /* Подсказки к цветам */
+    .dot {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 1px solid rgba(255,255,255,0.4);
+    }
+    .dot-red    { background: #cc3333; }
+    .dot-blue   { background: #3366cc; }
+    .dot-yellow { background: #cccc33; }
+
+    #grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+      width: 90vw;
+      max-width: 600px;
+    }
+    .cell {
+      aspect-ratio: 1;
+      background: #222;
+      border: 1px solid #444;
+      border-radius: 8px;
+      cursor: pointer;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      position: relative;
+      transition: transform 0.1s, box-shadow 0.2s, background-color 0.25s;
+      overflow: hidden;
+    }
+    .cell:hover {
+      box-shadow: 0 0 8px rgba(255,255,255,0.15);
+      border-color: #666;
+    }
+    .bg-red    { background: #cc3333; }
+    .bg-blue   { background: #3366cc; }
+    .bg-yellow { background: #cccc33; }
+    .icon {
+      font-size: 40px;
+      text-shadow: 0 0 4px rgba(0,0,0,0.6);
+      z-index: 1;
+    }
+
+    /* Крестики «здесь цвета нет» — в углах ячейки */
+    .cross {
+      position: absolute;
+      font-size: 15px;
+      font-weight: bold;
+      line-height: 1;
+      text-shadow: 0 0 3px rgba(0,0,0,0.8);
+      pointer-events: none;
+    }
+    .cross-red    { color: #ff5555; }
+    .cross-blue   { color: #6699ff; }
+    .cross-yellow { color: #ffee55; }
+    .pos-tl { top: 3px; left: 5px; }
+    .pos-tr { top: 3px; right: 5px; }
+    .pos-bl { bottom: 3px; left: 5px; }
+
+    /* Подсветка ячейки, где текущий предмет поставить нельзя */
+    .cell.blocked-flash {
+      animation: blockedFlash 0.5s ease;
+    }
+    @keyframes blockedFlash {
+      0%, 100% { box-shadow: none; }
+      50% { box-shadow: 0 0 14px rgba(255,80,80,0.9); border-color: #ff5555; }
+    }
+
+    #status {
+      margin: 14px 0 4px;
+      min-height: 26px;
+      text-align: center;
+      font-weight: bold;
+      font-size: 16px;
+    }
+    .btn-reset {
+      margin-top: 8px;
+      background: #555;
+      color: white;
+      font-size: 15px;
+      padding: 10px 22px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .btn-reset:hover { background: #777; }
+  </style>
+</head>
+<body>
+  <h1>Шпаргалка — Лига</h1>
+  
+  <div id="toolbar"></div>
+
+  <div id="grid"></div>
+
+  <div id="status"></div>
+  <button class="btn-reset" onclick="clearAll()">Очистить всё</button>
+
+  <script>
+    const GRID_SIZE = 4;
+
+    const colors = ['red', 'blue', 'yellow'];
+    const colorNames = { red: 'красный', blue: 'синий', yellow: 'жёлтый' };
+    const itemsConfig = {
+      key:  { red: 2, blue: 2, yellow: 1 },
+      bomb: { red: 2, blue: 2, yellow: 1 }
+    };
+    const itemEmoji = { key: '🔑', bomb: '💣' };
+    const itemNames = { key: 'ключ', bomb: 'бомба' };
+
+    // Состояние
+    let cells = [];        // grid[r][c] = { item: null|{type,color}, crosses: Set }
+    let selectedTool = null; // { type, color } | { type: 'erase' }
+
+    const gridEl = document.getElementById('grid');
+    const toolbarEl = document.getElementById('toolbar');
+    const statusEl = document.getElementById('status');
+
+    function getNeighbors(r, c) {
+      const dirs = [
+        [-1,-1],[-1,0],[-1,1],
+        [0,-1],[0,1],
+        [1,-1],[1,0],[1,1]
+      ];
+      const result = [];
+      for (const [dr, dc] of dirs) {
+        const nr = r + dr, nc = c + dc;
+        if (nr >= 0 && nr < GRID_SIZE && nc >= 0 && nc < GRID_SIZE) {
+          result.push([nr, nc]);
+        }
+      }
+      return result;
+    }
+
+    function initBoard() {
+      cells = Array.from({ length: GRID_SIZE }, () =>
+        Array.from({ length: GRID_SIZE }, () => ({ item: null, crosses: new Set() }))
+      );
+      selectedTool = null;
+      renderToolbar();
+      renderGrid();
+      updateStatus('Выбери предмет и кликни по ячейке.');
+    }
+
+    function placedCount(type, color) {
+      let n = 0;
+      for (let r = 0; r < GRID_SIZE; r++)
+        for (let c = 0; c < GRID_SIZE; c++) {
+          const item = cells[r][c].item;
+          if (item && item.type === type && item.color === color) n++;
+        }
+      return n;
+    }
+
+    function totalPlaced() {
+      let n = 0;
+      for (let r = 0; r < GRID_SIZE; r++)
+        for (let c = 0; c < GRID_SIZE; c++)
+          if (cells[r][c].item) n++;
+      return n;
+    }
+
+    function remaining(type, color) {
+      return itemsConfig[type][color] - placedCount(type, color);
+    }
+
+    // Создаёт кнопку одного предмета
+    function createToolButton(type, color) {
+      const left = remaining(type, color);
+      const btn = document.createElement('div');
+      btn.className = 'tool' +
+        (left === 0 ? ' disabled' : '') +
+        (selectedTool && selectedTool.type === type && selectedTool.color === color ? ' selected' : '');
+      btn.innerHTML =
+        `${itemEmoji[type]} <span class="dot dot-${color}"></span> ` +
+        `${colorNames[color]} ` +
+        `<span class="count">×${left}</span>`;
+      if (left > 0) {
+        btn.onclick = () => {
+          selectedTool = (selectedTool && selectedTool.type === type && selectedTool.color === color)
+            ? null : { type, color };
+          renderToolbar();
+          if (selectedTool) {
+            updateStatus(`Выбрано: ${colorNames[color]} ${itemNames[type]}. Кликни по ячейке.`);
+          } else {
+            updateStatus('Выбери предмет и кликни по ячейке.');
+          }
+        };
+      }
+      return btn;
+    }
+
+    function renderToolbar() {
+      toolbarEl.innerHTML = '';
+
+      // Ряд с ключами
+      const keysRow = document.createElement('div');
+      keysRow.className = 'tool-row';
+      const keysLabel = document.createElement('span');
+      keysLabel.className = 'row-label';
+      keysLabel.textContent = '🔑';
+      keysRow.appendChild(keysLabel);
+      for (const color of colors) {
+        keysRow.appendChild(createToolButton('key', color));
+      }
+      toolbarEl.appendChild(keysRow);
+
+      // Ряд с бомбами
+      const bombsRow = document.createElement('div');
+      bombsRow.className = 'tool-row';
+      const bombsLabel = document.createElement('span');
+      bombsLabel.className = 'row-label';
+      bombsLabel.textContent = '💣';
+      bombsRow.appendChild(bombsLabel);
+      for (const color of colors) {
+        bombsRow.appendChild(createToolButton('bomb', color));
+      }
+      toolbarEl.appendChild(bombsRow);
+
+      // Кнопка «Стереть»
+      const eraseRow = document.createElement('div');
+      eraseRow.className = 'tool-row';
+      const erase = document.createElement('div');
+      erase.className = 'tool tool-erase' + (selectedTool && selectedTool.type === 'erase' ? ' selected' : '');
+      erase.textContent = '🧹 Стереть';
+      erase.onclick = () => {
+        selectedTool = (selectedTool && selectedTool.type === 'erase') ? null : { type: 'erase' };
+        renderToolbar();
+        updateStatus(selectedTool ? 'Режим стирания: кликни по ячейке с предметом.' : 'Выбери предмет и кликни по ячейке.');
+      };
+      eraseRow.appendChild(erase);
+      toolbarEl.appendChild(eraseRow);
+    }
+
+    // Пересчитывает крестики по всем установленным предметам
+    function recomputeCrosses() {
+      for (let r = 0; r < GRID_SIZE; r++)
+        for (let c = 0; c < GRID_SIZE; c++)
+          cells[r][c].crosses.clear();
+
+      for (let r = 0; r < GRID_SIZE; r++) {
+        for (let c = 0; c < GRID_SIZE; c++) {
+          const item = cells[r][c].item;
+          if (!item) continue;
+          for (const [nr, nc] of getNeighbors(r, c)) {
+            cells[nr][nc].crosses.add(item.color);
+          }
+        }
+      }
+    }
+
+    function renderCell(r, c) {
+      const cellEl = document.getElementById(`cell-${r}-${c}`);
+      const data = cells[r][c];
+
+      // Фон и предмет
+      cellEl.className = 'cell';
+      cellEl.classList.remove('bg-red', 'bg-blue', 'bg-yellow');
+      if (data.item) {
+        cellEl.classList.add('bg-' + data.item.color);
+        cellEl.innerHTML = `<span class="icon">${itemEmoji[data.item.type]}</span>`;
+      } else {
+        cellEl.innerHTML = '';
+      }
+
+      // Крестики: красный — верх-лево, синий — верх-право, жёлтый — низ-лево
+      const positions = { red: 'pos-tl', blue: 'pos-tr', yellow: 'pos-bl' };
+      for (const color of data.crosses) {
+        const span = document.createElement('span');
+        span.className = `cross cross-${color} ${positions[color]}`;
+        span.textContent = '✗';
+        cellEl.appendChild(span);
+      }
+    }
+
+    function renderGrid() {
+      gridEl.innerHTML = '';
+      for (let r = 0; r < GRID_SIZE; r++) {
+        for (let c = 0; c < GRID_SIZE; c++) {
+          const cellDiv = document.createElement('div');
+          cellDiv.id = `cell-${r}-${c}`;
+          cellDiv.className = 'cell';
+          cellDiv.onclick = () => handleCellClick(r, c);
+          gridEl.appendChild(cellDiv);
+          renderCell(r, c);
+        }
+      }
+    }
+
+    function flashBlocked(r, c) {
+      const cellEl = document.getElementById(`cell-${r}-${c}`);
+      cellEl.classList.remove('blocked-flash');
+      void cellEl.offsetWidth;
+      cellEl.classList.add('blocked-flash');
+    }
+
+    function handleCellClick(r, c) {
+      const data = cells[r][c];
+
+      if (!selectedTool) {
+        updateStatus('Сначала выбери предмет в панели сверху.', '#ffcc66');
+        return;
+      }
+
+      // Режим стирания
+      if (selectedTool.type === 'erase') {
+        if (!data.item) {
+          updateStatus('Здесь и так пусто.', '#ffcc66');
+          return;
+        }
+        data.item = null;
+        recomputeCrosses();
+        renderAll();
+        renderToolbar();
+        updateStatus('Предмет убран.');
+        return;
+      }
+
+      const { type, color } = selectedTool;
+
+      // Ячейка занята
+      if (data.item) {
+        flashBlocked(r, c);
+        updateStatus('Эта ячейка уже занята. Сотри предмет, чтобы поставить новый.', '#ff6666');
+        return;
+      }
+
+      // Нарушение правила соседства того же цвета
+      if (data.crosses.has(color)) {
+        flashBlocked(r, c);
+        updateStatus(`Здесь не может быть ${colorNames[color]} предмета — рядом уже стоит ${colorNames[color]}.`, '#ff6666');
+        return;
+      }
+
+      // Ставим предмет
+      data.item = { type, color };
+      recomputeCrosses();
+      renderAll();
+
+      const left = remaining(type, color);
+      if (totalPlaced() === 10) {
+        updateStatus('Схема готова! Все 10 предметов расставлены. 🎯', '#aaffaa');
+      } else {
+        updateStatus(`${colorNames[color]} ${itemNames[type]} установлен. Осталось: ${left}.`);
+      }
+
+      renderToolbar();
+      selectedTool = null; // сбрасываем выбор после установки
+      renderToolbar();
+    }
+
+    function renderAll() {
+      for (let r = 0; r < GRID_SIZE; r++)
+        for (let c = 0; c < GRID_SIZE; c++)
+          renderCell(r, c);
+    }
+
+    function updateStatus(text, color = '#e0e0e0') {
+      statusEl.textContent = text;
+      statusEl.style.color = color;
+    }
+
+    function clearAll() {
+      initBoard();
+    }
+
+    initBoard();
+  </script>
+</body>
+</html>
